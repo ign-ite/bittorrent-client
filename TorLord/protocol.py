@@ -338,4 +338,27 @@ class KeepAlive(PeerMessage):
         return 'KeepAlive'
 
 
+class BitField(PeerMessage):
+    def __init__(self, data):
+        self.bitfield = bitstring.BitArray(bytes=data)
+
+    def encode(self) -> bytes:
+        bits_length = len(self.bitfield)
+        return struct.pack('>Ib' + str(bits_length) + 's',
+                           1 + bits_length,
+                           PeerMessage.BitField,
+                           self.bitfield)
+
+    @classmethod
+    def decode(cls, data: bytes):
+        message_length = struct.unpack('>I', data[:4])[0]
+        logging.debug('Decoding BitField of length: {length}'.format(
+            length=message_length))
+
+        parts = struct.unpack('>Ib' + str(message_length - 1) + 's', data)
+        return cls(parts[2])
+
+    def __str__(self):
+        return 'BitField'
+
 
