@@ -275,5 +275,67 @@ class PeerStreamIterator:
         return None
 
 
+class PeerMessage:
+    # It provides messages between two peers
+    Choke = 0
+    Unchoke = 1
+    Interested = 2
+    NotInterested = 3
+    Have = 4
+    BitField = 5
+    Request = 6
+    Piece = 7
+    Cancel = 8
+    Port = 9
+    Handshake = None  # Handshake is not really part of the messages
+    KeepAlive = None  # Keep-alive has no ID
+
+    def encode(self) -> bytes:
+        pass
+
+    @classmethod
+    def decode(cls, data: bytes):
+        pass
+
+class Handshake(PeerMessage):
+    # The messages is always 68 bytes
+    # v1.0 of BitTorrent --> pstrlen = 19 pstr = "BitTorrent Protocol" so length 9s pstrlen + len(pstr)
+    # which is equal to 68 bytes
+    length = 49+19
+
+    def __init__(self, info_hash: bytes, peer_id: bytes):
+        if isinstance(info_hash, str):
+            info_hash = info_hash.encode('utf-8')
+        if isinstance(peer_id, str):
+            peer_id = peer_id.encode('utf-8')
+        self.info_hash = info_hash
+        self.peer_id = peer_id
+
+    def encode(self) -> bytes:
+        return struct.pack(
+            '>B19s8x20s20s',
+            19,                   # Single byte (B)
+            b'BitTorrent protocol',  # String 19s
+                                     # Reserved 8x (pad byte, no value)
+            self.info_hash,          # String 20s
+            self.peer_id)            # String 20s
+
+    @classmethod
+    def decode(cls, data: bytes):
+        logging.debug('Decoding Handshake of length: {length}'.format(
+            length=len(data)))
+        if len(data) < (49 + 19):
+            return None
+        parts = struct.unpack('>B19s8x20s20s', data)
+        return cls(info_hash=parts[2], peer_id=parts[3])
+
+    def __str__(self):
+        return 'Handshake'
+#This decodes what was encoded above
+
+class KeepAlive(PeerMessage):
+    def __str__(self):
+        return 'KeepAlive'
+
 
 
