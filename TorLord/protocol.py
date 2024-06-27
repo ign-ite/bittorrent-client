@@ -9,7 +9,7 @@ import bitstring
 # The default request size for blocks of pieces is 2^14 bytes.
 #       https://wiki.theory.org/BitTorrentSpecification
 #
-REQUEST_SIZE = 2**14
+REQUEST_SIZE = 2 ** 14
 
 
 class ProtocolError(BaseException):
@@ -49,7 +49,7 @@ class PeerConnection:
                 self.reader, self.writer = await asyncio.open_connection(
                     ip, port)
                 logging.info('Connection open to peer: {ip}'.format(ip=ip))
-                buffer = await self._handshake()
+                buffer = await self._handshake
                 # The default state for a connection is that peer is not
                 # interested and we are choked
                 self.my_state.append('choked')
@@ -144,6 +144,7 @@ class PeerConnection:
             self.writer.write(message)
             await self.writer.drain()
 
+    @property
     async def _handshake(self):
         self.writer.write(Handshake(self.info_hash, self.peer_id).encode())
         await self.writer.drain()
@@ -177,9 +178,9 @@ class PeerConnection:
 
 
 class PeerStreamIterator:
-    CHUNK_SIZE = 10*1024
+    CHUNK_SIZE = 10 * 1024
 
-    def __init__(self, reader, initial: bytes=None):
+    def __init__(self, reader, initial: bytes = None):
         self.reader = reader
         self.buffer = initial if initial else b''
 
@@ -297,11 +298,12 @@ class PeerMessage:
     def decode(cls, data: bytes):
         pass
 
+
 class Handshake(PeerMessage):
     # The messages is always 68 bytes
     # v1.0 of BitTorrent --> pstrlen = 19 pstr = "BitTorrent Protocol" so length 9s pstrlen + len(pstr)
     # which is equal to 68 bytes
-    length = 49+19
+    length = 49 + 19
 
     def __init__(self, info_hash: bytes, peer_id: bytes):
         if isinstance(info_hash, str):
@@ -314,11 +316,11 @@ class Handshake(PeerMessage):
     def encode(self) -> bytes:
         return struct.pack(
             '>B19s8x20s20s',
-            19,                   # Single byte (B)
+            19,  # Single byte (B)
             b'BitTorrent protocol',  # String 19s
-                                     # Reserved 8x (pad byte, no value)
-            self.info_hash,          # String 20s
-            self.peer_id)            # String 20s
+            # Reserved 8x (pad byte, no value)
+            self.info_hash,  # String 20s
+            self.peer_id)  # String 20s
 
     @classmethod
     def decode(cls, data: bytes):
@@ -331,6 +333,8 @@ class Handshake(PeerMessage):
 
     def __str__(self):
         return 'Handshake'
+
+
 #This decodes what was encoded above
 
 class KeepAlive(PeerMessage):
@@ -362,3 +366,129 @@ class BitField(PeerMessage):
         return 'BitField'
 
 
+class Interested(PeerMessage):
+    def encode(self) -> bytes:
+        return struct.pack('>Ib',
+                           1,  # Message length
+                           PeerMessage.Interested)
+
+    def __str__(self):
+        return 'Interested'
+
+
+class NotInterested(PeerMessage):
+    def __str__(self):
+        return 'NotInterested'
+
+
+class Choke(PeerMessage):  #Basically tells other peers to stop send req msgs until unchocked
+    def __str__(self):
+        return 'Choke'
+
+
+class Unchoke(PeerMessage):
+    def __str__(self):
+        return 'Unchoke'
+
+
+class Have(PeerMessage):
+    def __init__(self, index: int):
+        self.index = index
+
+    def encode(self):
+        return struct.pack('>IbI',
+                           5,  # Message length
+                           PeerMessage.Have,
+                           self.index)
+
+    @classmethod
+    def decode(cls, data: bytes):
+        logging.debug('Decoding Have of length: {length}'.format(
+            length=len(data)))
+        index = struct.unpack('>IbI', data)[2]
+        return cls(index)
+
+    def __str__(self):
+        return 'Have'
+
+
+class Request(PeerMessage):  #I'll use this to request a part of a piece
+    def __init__(self, index: int, begin: int, length: int = REQUEST_SIZE):
+        self.index = index
+        self.begin = begin
+        self.length = length
+
+    def encode(self):
+        return struct.pack('>IbIII',
+                           13,
+                           PeerMessage.Request,
+                           self.index,
+                           self.begin,
+                           self.length)
+
+    @classmethod
+    def decode(cls, data: bytes):
+        logging.debug('Decoding Request of length: {length}'.format(
+            length=len(data)))
+        # Tuple with (message length, id, index, begin, length)
+        parts = struct.unpack('>IbIII', data)
+        return cls(parts[2], parts[3], parts[4])
+
+    def __str__(self):
+        return 'Request'
+
+
+class Piece(PeerMessage):
+    length = 9
+
+    def __init__(self, index: int, begin: int, block: bytes):
+        self.index = index
+        self.begin = begin
+        self.block = block
+
+    def encode(self):
+        message_length = Piece.length + len(self.block)
+        return struct.pack('>IbII' + str(len(self.block)) + 's',
+                           message_length,
+                           PeerMessage.Piece,
+                           self.index,
+                           self.begin,
+                           self.block)
+
+    @classmethod
+    def decode(cls, data: bytes):
+        logging.debug('Decoding Piece of length: {length}'.format(
+            length=len(data)))
+        length = struct.unpack('>I', data[:4])[0]
+        parts = struct.unpack('>IbII' + str(length - Piece.length) + 's',
+                              data[:length + 4])
+        return cls(parts[2], parts[3], parts[4])
+
+    def __str__(self):
+        return 'Piece'
+
+
+class Cancel(PeerMessage):
+    def __init__(self, index, begin, length: int = REQUEST_SIZE):
+        self.index = index
+        self.begin = begin
+        self.length = length
+
+    def encode(self):
+        return struct.pack('>IbIII',
+                           13,
+                           PeerMessage.Cancel,
+                           self.index,
+                           self.begin,
+                           self.length)
+
+    @classmethod
+    def decode(cls, data: bytes):
+        logging.debug('Decoding Cancel of length: {length}'.format(
+            length=len(data)))
+        # Tuple with (message length, id, index, begin, length)
+        parts = struct.unpack('>IbIII', data)
+        return cls(parts[2], parts[3], parts[4])
+
+    def __str__(self):
+        return 'Cancel'
