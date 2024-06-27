@@ -175,3 +175,105 @@ class PeerConnection:
         self.writer.write(message.encode())
         await self.writer.drain()
 
+
+class PeerStreamIterator:
+    CHUNK_SIZE = 10*1024
+
+    def __init__(self, reader, initial: bytes=None):
+        self.reader = reader
+        self.buffer = initial if initial else b''
+
+    async def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        # Read data from the socket. When we have enough data to parse, parse
+        # it and return the message. Until then keep reading from stream
+        while True:
+            try:
+                data = await self.reader.read(PeerStreamIterator.CHUNK_SIZE)
+                if data:
+                    self.buffer += data
+                    message = self.parse()
+                    if message:
+                        return message
+                else:
+                    logging.debug('No data read from stream')
+                    if self.buffer:
+                        message = self.parse()
+                        if message:
+                            return message
+                    raise StopAsyncIteration()
+            except ConnectionResetError:
+                logging.debug('Connection closed by peer')
+                raise StopAsyncIteration()
+            except CancelledError:
+                raise StopAsyncIteration()
+            except StopAsyncIteration as e:
+                raise e
+            except Exception:
+                logging.exception('Error when iterating over stream!')
+                raise StopAsyncIteration()
+        raise StopAsyncIteration()
+
+    def parse(self):
+        # Each message is structured as:
+        #     <length prefix><message ID><payload>
+        header_length = 4
+
+        if len(self.buffer) > 4:  # 4 bytes is needed to identify the message
+            message_length = struct.unpack('>I', self.buffer[0:4])[0]
+
+            if message_length == 0:
+                return KeepAlive()
+
+            if len(self.buffer) >= message_length:
+                message_id = struct.unpack('>b', self.buffer[4:5])[0]
+
+                def _consume():
+                    self.buffer = self.buffer[header_length + message_length:]
+
+                def _data():
+                    return self.buffer[:header_length + message_length]
+
+                if message_id is PeerMessage.BitField:
+                    data = _data()
+                    _consume()
+                    return BitField.decode(data)
+                elif message_id is PeerMessage.Interested:
+                    _consume()
+                    return Interested()
+                elif message_id is PeerMessage.NotInterested:
+                    _consume()
+                    return NotInterested()
+                elif message_id is PeerMessage.Choke:
+                    _consume()
+                    return Choke()
+                elif message_id is PeerMessage.Unchoke:
+                    _consume()
+                    return Unchoke()
+                elif message_id is PeerMessage.Have:
+                    data = _data()
+                    _consume()
+                    return Have.decode(data)
+                elif message_id is PeerMessage.Piece:
+                    data = _data()
+                    _consume()
+                    return Piece.decode(data)
+                elif message_id is PeerMessage.Request:
+                    data = _data()
+                    _consume()
+                    return Request.decode(data)
+                elif message_id is PeerMessage.Cancel:
+                    data = _data()
+                    _consume()
+                    return Cancel.decode(data)
+                else:
+                    logging.info('Unsupported message!')
+            else:
+                logging.debug('Not enough in buffer in order to parse')
+        return None
+
+
+
+
