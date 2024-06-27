@@ -155,4 +155,85 @@ class PieceManager: #The class that was missing previous commit!!
                 num_blocks = math.ceil(last_length / REQUEST_SIZE)
                 blocks = [Block(index, offset * REQUEST_SIZE, REQUEST_SIZE)
                           for offset in range(num_blocks)]
+                if last_length % REQUEST_SIZE > 0:
+                    last_block = blocks[-1]
+                    last_block.length = last_length % REQUEST_SIZE
+                    blocks[-1] = last_block
+            pieces.append(Piece(index, blocks, hash_value))
+        return pieces
+
+    def close(self):
+        if self.fd:
+            os.close(self.fd)
+
+
+    @property
+    def complete(self):
+        return len(self.have_pieces) == self.total_pieces
+
+    @property
+    def bytes_downloaded(self) -> int:
+        return len(self.have_pieces) * self.torrent.piece_length
+
+    @property
+    def bytes_uploaded(self) -> int:
+        return 0
+
+    def add_peer(self, peer_id, bitfield):
+        self.peers[peer_id] = bitfield
+
+    def update_peer(self, peer_id, index: int):
+        if peer_id in self.peers:
+            self.peers[peer_id][index] = 1
+
+    def remove_peer(self, peer_id):
+        if peer_id in self.peers:
+            del self.peers[peer_id]
+
+    def next_request(self, peer_id) -> Block:
+        if peer_id not in self.peers:
+            return None
+
+        block = self._expired_requests(peer_id)
+        if not block:
+            block = self._next_ongoing(peer_id)
+            if not block:
+                block = self._get_rarest_piece(peer_id).next_request()
+        return block
+
+    def block_received(self, peer_id, piece_index, block_offset, data):
+        logging.debug('Received block {block_offset} for piece {piece_index} '
+                      'from peer {peer_id}: '.format(block_offset=block_offset,
+                                                     piece_index=piece_index,
+                                                     peer_id=peer_id))
+
+        for index, request in enumerate(self.pending_blocks):
+            if request.block.piece == piece_index and \
+                    request.block.offset == block_offset:
+                del self.pending_blocks[index]
+                break
+
+        pieces = [p for p in self.ongoing_pieces if p.index == piece_index]
+        piece = pieces[0] if pieces else None
+        if piece:
+            piece.block_received(block_offset, data)
+            if piece.is_complete():
+                if piece.is_hash_matching():
+                    self._write(piece)
+                    self.ongoing_pieces.remove(piece)
+                    self.have_pieces.append(piece)
+                    complete = (self.total_pieces -
+                                len(self.missing_pieces) -
+                                len(self.ongoing_pieces))
+                    logging.info(
+                        '{complete} / {total} pieces downloaded {per:.3f} %'
+                        .format(complete=complete,
+                                total=self.total_pieces,
+                                per=(complete / self.total_pieces) * 100))
+                else:
+                    logging.info('Discarding corrupt piece {index}'
+                                 .format(index=piece.index))
+                    piece.reset()
+        else:
+            logging.warning('Trying to update piece that is not ongoing!')
 
