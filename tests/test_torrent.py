@@ -25,6 +25,7 @@ class UbuntuTorrentTests(unittest.TestCase):
         self.assertEqual(1, len(self.t.files))
         self.assertEqual(
             'ubuntu-16.04-desktop-amd64.iso', self.t.files[0].name)
+        #this is the ubuntu iso directory I have the amd one cos i have amd processor!
         self.assertEqual(1485881344, self.t.files[0].length)
 
     def test_hash_value(self):
