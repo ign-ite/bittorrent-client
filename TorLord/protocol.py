@@ -100,4 +100,78 @@ class PeerConnection:
                                 self.my_state.append('pending_request')
                                 await self._request_piece()
 
-            except Protoc
+            except ProtocolError as e:
+                logging.exception('Protocol error')
+            except (ConnectionRefusedError, TimeoutError):
+                logging.warning('Unable to connect to peer')
+            except (ConnectionResetError, CancelledError):
+                logging.warning('Connection closed')
+            except Exception as e:
+                logging.exception('An error occurred')
+                self.cancel()
+                raise e
+            self.cancel()
+
+    def cancel(self):
+        logging.info('Closing peer {id}'.format(id=self.remote_id))
+        if not self.future.done():
+            self.future.cancel()
+        if self.writer:
+            self.writer.close()
+
+        self.queue.task_done()
+
+    def stop(self):
+        # Set state to stopped and cancel our future to break out of the loop.
+        # The rest of the cleanup will eventually be managed by loop calling
+        # `cancel`.
+        self.my_state.append('stopped')
+        if not self.future.done():
+            self.future.cancel()
+
+    async def _request_piece(self):
+        block = self.piece_manager.next_request(self.remote_id)
+        if block:
+            message = Request(block.piece, block.offset, block.length).encode()
+
+            logging.debug('Requesting block {block} for piece {piece} '
+                          'of {length} bytes from peer {peer}'.format(
+                            piece=block.piece,
+                            block=block.offset,
+                            length=block.length,
+                            peer=self.remote_id))
+
+            self.writer.write(message)
+            await self.writer.drain()
+
+    async def _handshake(self):
+        self.writer.write(Handshake(self.info_hash, self.peer_id).encode())
+        await self.writer.drain()
+
+        buf = b''
+        tries = 1
+        while len(buf) < Handshake.length and tries < 10:
+            tries += 1
+            buf = await self.reader.read(PeerStreamIterator.CHUNK_SIZE)
+
+        response = Handshake.decode(buf[:Handshake.length])
+        if not response:
+            raise ProtocolError('Unable receive and parse a handshake')
+        if not response.info_hash == self.info_hash:
+            raise ProtocolError('Handshake with invalid info_hash')
+
+        # from the peer match the peer_id received from the tracker.
+        self.remote_id = response.peer_id
+        logging.info('Handshake with peer was successful')
+
+        # We need to return the remaining buffer data, since we might have
+        # read more bytes then the size of the handshake message and we need
+        # those bytes to parse the next message.
+        return buf[Handshake.length:]
+
+    async def _send_interested(self):
+        message = Interested()
+        logging.debug('Sending message: {type}'.format(type=message))
+        self.writer.write(message.encode())
+        await self.writer.drain()
+
