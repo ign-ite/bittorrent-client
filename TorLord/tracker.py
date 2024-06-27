@@ -82,7 +82,6 @@ class Tracker:
             'info_hash': self.torrent.info_hash,
             'peer_id': self.peer_id,
             'port': 6889,
-            # TODO Update stats when communicating with tracker
             'uploaded': 0,
             'downloaded': 0,
             'left': 0,
