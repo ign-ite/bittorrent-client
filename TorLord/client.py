@@ -237,3 +237,55 @@ class PieceManager: #The class that was missing previous commit!!
         else:
             logging.warning('Trying to update piece that is not ongoing!')
 
+
+    def _expired_requests(self, peer_id) -> Block:
+        current = int(round(time.time() * 1000))
+        for request in self.pending_blocks:
+            if self.peers[peer_id][request.block.piece]:
+                if request.added + self.max_pending_time < current:
+                    logging.info('Re-requesting block {block} for '
+                                 'piece {piece}'.format(
+                        block=request.block.offset,
+                        piece=request.block.piece))
+                    # Reset expiration timer
+                    request.added = current
+                    return request.block
+        return None
+
+    def _next_ongoing(self, peer_id) -> Block:
+        for piece in self.ongoing_pieces:
+            if self.peers[peer_id][piece.index]:
+                block = piece.next_request()
+                if block:
+                    self.pending_blocks.append(
+                        PendingRequest(block, int(round(time.time() * 1000))))
+                    return block
+        return None
+
+    def _get_rarest_piece(self, peer_id):
+        piece_count = defaultdict(int)
+        for piece in self.missing_pieces:
+            if not self.peers[peer_id][piece.index]:
+                continue
+            for p in self.peers:
+                if self.peers[p][piece.index]:
+                    piece_count[piece] += 1
+
+        rarest_piece = min(piece_count, key=lambda p: piece_count[p])
+        self.missing_pieces.remove(rarest_piece)
+        self.ongoing_pieces.append(rarest_piece)
+        return rarest_piece
+
+    def _next_missing(self, peer_id) -> Block:
+        for index, piece in enumerate(self.missing_pieces):
+            if self.peers[peer_id][piece.index]:
+                piece = self.missing_pieces.pop(index)
+                self.ongoing_pieces.append(piece)
+                return piece.next_request()
+        return None
+
+    def _write(self, piece):
+        pos = piece.index * self.torrent.piece_length
+        os.lseek(self.fd, pos, os.SEEK_SET)
+        os.write(self.fd, piece.data)
+

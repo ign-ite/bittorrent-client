@@ -5,7 +5,7 @@ import socket
 from struct import unpack
 from urllib.parse import urlencode
 
-import bencoding
+from . import bencoding
 
 
 class Tracker:
